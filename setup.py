@@ -19,7 +19,9 @@ setup(name='wishbone',
       install_requires=[
           'numpy>=1.12.0',
           'pandas>=0.19.2',
-          'scipy>=0.18.1',
+          # scipy 1.3.1 (and probably 1.3.0) have a nasty bug:
+          # https://github.com/scipy/scipy/issues/10695
+          'scipy>=0.18.1, !=1.3.0, !=1.3.1',
           'Cython',
           'bhtsne',
           'matplotlib>=2.0.0',
@@ -32,7 +34,7 @@ setup(name='wishbone',
       )
     
 # install phenograph
-call(['pip3', 'install', 'git+https://github.com/jacoblevine/phenograph.git'])
+call(['pip', 'install', 'git+https://github.com/jacoblevine/phenograph.git'])
 
 
 # get location of setup.py

@@ -2,7 +2,7 @@
 
 import matplotlib
 matplotlib.use("TkAgg")
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
@@ -112,7 +112,7 @@ class wishbone_gui(tk.Tk):
         #set up canvas for plots
         self.fig, self.ax = wishbone.wb.get_fig()
         self.canvas = FigureCanvasTkAgg(self.fig, self)
-        self.canvas.show()
+        self.canvas.draw()
         self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=4,sticky='NSEW')
         tk.Label(self, text=u"Visualizations:", fg='black', bg='white').grid(column=0, row=1)
 
@@ -398,7 +398,7 @@ class wishbone_gui(tk.Tk):
         self.resetCanvas()
         self.fig, self.ax = self.scdata.plot_pca_variance_explained(ylim=(0, self.yLimVar.get()), n_components=self.compVar.get())
         self.canvas = FigureCanvasTkAgg(self.fig, self)
-        self.canvas.show()
+        self.canvas.draw()
         self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=4,sticky='NW') 
         self.currentPlot = 'pca'
 
@@ -419,7 +419,7 @@ class wishbone_gui(tk.Tk):
         self.resetCanvas()
         self.fig, self.ax = self.scdata.plot_tsne()
         self.canvas = FigureCanvasTkAgg(self.fig, self)
-        self.canvas.show()
+        self.canvas.draw()
         self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=4,sticky='NW') 
         self.currentPlot = 'tsne'
 
@@ -438,7 +438,7 @@ class wishbone_gui(tk.Tk):
         self.resetCanvas()
         self.fig, self.ax = self.scdata.plot_diffusion_components()
         self.canvas = FigureCanvasTkAgg(self.fig, self)
-        self.canvas.show()
+        self.canvas.draw()
         self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=4,sticky='W') 
         self.currentPlot = 'dm_components'
 
@@ -487,7 +487,7 @@ class wishbone_gui(tk.Tk):
         self.resetCanvas()
         self.fig, self.ax = self.wb.plot_wishbone_on_tsne()
         self.canvas = FigureCanvasTkAgg(self.fig, self)
-        self.canvas.show()
+        self.canvas.draw()
         self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=4)
         self.currentPlot = 'wishbone_on_tsne'
 
@@ -512,7 +512,7 @@ class wishbone_gui(tk.Tk):
             self.fig.tight_layout()
             self.fig.subplots_adjust(right=0.8)
             self.canvas = FigureCanvasTkAgg(self.fig, self)
-            self.canvas.show()
+            self.canvas.draw()
             self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=5, sticky='W')
             self.currentPlot = 'wishbone_marker_trajectory'
             self.geometry('1050x550')
@@ -541,7 +541,7 @@ class wishbone_gui(tk.Tk):
             self.fig.set_size_inches(10, 4, forward=True)
             self.fig.tight_layout()
             self.canvas = FigureCanvasTkAgg(self.fig, self)
-            self.canvas.show()
+            self.canvas.draw()
             self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=5, sticky='W')
             self.currentPlot = 'wishbone_marker_heatmap'
 
@@ -563,7 +563,7 @@ class wishbone_gui(tk.Tk):
             self.resetCanvas()
             self.fig, self.ax = self.scdata.plot_gene_expression(self.selectedGenes)
             self.canvas = FigureCanvasTkAgg(self.fig, self)
-            self.canvas.show()
+            self.canvas.draw()
             self.canvas.get_tk_widget().grid(column=1, row=1, rowspan=10, columnspan=4,sticky='W')
             self.currentPlot = 'gene_expression_tsne'
             self.geometry('950x550')
