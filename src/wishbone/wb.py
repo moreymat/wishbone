@@ -24,7 +24,11 @@ with warnings.catch_warnings():
     warnings.simplefilter('ignore')  # catch experimental ipython widget warning
     import seaborn as sns
 
+# t-SNE implementations
 import bhtsne
+from openTSNE import TSNE
+from openTSNE.callbacks import ErrorLogger
+#
 from scipy.sparse import csr_matrix, find
 from scipy.sparse.linalg import eigs
 from numpy.linalg import norm
@@ -62,6 +66,7 @@ def get_fig(fig=None, ax=None, figsize=[6.5, 6.5]):
         ax = plt.gca()
     return fig, ax
 
+
 def density_2d(x, y):
     """return x and y and their density z, sorted by their density (smallest to largest)
 
@@ -74,6 +79,7 @@ def density_2d(x, y):
     i = np.argsort(z)
     return np.ravel(x)[i], np.ravel(y)[i], np.arcsinh(z[i])
 
+
 class SCData:
 
     def __init__(self, data, data_type='sc-seq', metadata=None):
@@ -85,7 +91,7 @@ class SCData:
         """
         if not (isinstance(data, pd.DataFrame)):
             raise TypeError('data must be of type or DataFrame')
-        if not data_type in ['sc-seq', 'masscyt']:
+        if data_type not in ['sc-seq', 'masscyt']:
             raise RuntimeError('data_type must be either sc-seq or masscyt')
         if metadata is None:
             metadata = pd.DataFrame(index=data.index, dtype='O')
@@ -100,11 +106,8 @@ class SCData:
         self._diffusion_map_correlations = None
         self._normalized = False
         self._cluster_assignments = None
-
-
         # Library size
         self._library_sizes = None
-
 
     def save(self, fout: str):# -> None:
         """
@@ -123,7 +126,6 @@ class SCData:
         """
         wb = wishbone.wb.Wishbone(self, True)
         wb.save(fout)
-
 
     @classmethod
     def load(cls, fin):
@@ -245,37 +247,28 @@ class SCData:
                             'object')
         self._cluster_assignments = item
 
-
     @classmethod
-    def from_csv(cls, counts_csv_file, data_type, cell_axis = 0, normalize=True):
-        if not data_type in ['sc-seq', 'masscyt']:
+    def from_csv(cls, counts_csv_file, data_type, cell_axis=0, normalize=True):
+        if data_type not in ['sc-seq', 'masscyt']:
             raise RuntimeError('data_type must be either sc-seq or masscyt')
-
         # Read in csv file
-        df = pd.read_csv( counts_csv_file, sep=None, header=0, index_col= 0,
-        engine='python' )
-
+        df = pd.read_csv(counts_csv_file, sep=None, header=0, index_col=0,
+                         engine='python')
         if cell_axis != 0:
             df = df.transpose()
-
         # Construct class object
-        scdata = cls( df, data_type=data_type )
-
+        scdata = cls(df, data_type=data_type)
         # Normalize if specified
         if data_type == 'sc-seq':
-            scdata = scdata.normalize_scseq_data( )
-
+            scdata = scdata.normalize_scseq_data()
         return scdata
-
 
     @classmethod
     def from_fcs(cls, fcs_file, cofactor=5,
-        metadata_channels=['Time', 'Event_length', 'DNA1', 'DNA2', 'Cisplatin', 'beadDist', 'bead1']):
-
+                 metadata_channels=['Time', 'Event_length', 'DNA1', 'DNA2', 'Cisplatin', 'beadDist', 'bead1']):
         # Parse the fcs file
-        text, data = fcsparser.parse( fcs_file )
+        text, data = fcsparser.parse(fcs_file)
         data = data.astype(np.float64)
-
         # Extract the S and N features (Indexing assumed to start from 1)
         # Assumes channel names are in S
         no_channels = text['$PAR']
@@ -287,21 +280,17 @@ class SCData:
             except KeyError:
                 channel_names[i - 1] = text['$P%dN' % i]
         data.columns = channel_names
-
         # Metadata and data
         metadata_channels = data.columns.intersection(metadata_channels)
-        data_channels = data.columns.difference( metadata_channels )
+        data_channels = data.columns.difference(metadata_channels)
         metadata = data[metadata_channels]
         data = data[data_channels]
-
         # Transform if necessary
         if cofactor is not None and cofactor > 0:
-            data = np.arcsinh(np.divide( data, cofactor ))
-
+            data = np.arcsinh(np.divide(data, cofactor))
         # Create and return scdata object
         scdata = cls(data, 'masscyt', metadata)
         return scdata
-
 
     def normalize_scseq_data(self):
         """
@@ -309,47 +298,38 @@ class SCData:
         and multiply counts of cells by the median of the molecule counts
         :return: SCData
         """
-
         molecule_counts = self.data.sum(axis=1)
         data = self.data.div(molecule_counts, axis=0)\
             .mul(np.median(molecule_counts), axis=0)
         scdata = SCData(data=data, metadata=self.metadata)
         scdata._normalized = True
-
         # check that none of the genes are empty; if so remove them
         nonzero_genes = scdata.data.sum(axis=0) != 0
         scdata.data = scdata.data.ix[:, nonzero_genes].astype(np.float32)
-
         # set unnormalized_cell_sums
         self.library_sizes = molecule_counts
         scdata._library_sizes = molecule_counts
-
         return scdata
-
 
     def run_pca(self, n_components=100):
         """
         Principal component analysis of the data.
         :param n_components: Number of components to project the data
         """
-
         X = self.data.values
         # Make sure data is zero mean
         X = np.subtract(X, np.amin(X))
         X = np.divide(X, np.amax(X))
-
         # Compute covariance matrix
         if (X.shape[1] < X.shape[0]):
             C = np.cov(X, rowvar=0)
         # if N>D, we better use this matrix for the eigendecomposition
         else:
             C = np.multiply((1/X.shape[0]), np.dot(X, X.T))
-
         # Perform eigendecomposition of C
         C[np.where(np.isnan(C))] = 0
         C[np.where(np.isinf(C))] = 0
         l, M = np.linalg.eig(C)
-
         # Sort eigenvectors in descending order
         ind = np.argsort(l)[::-1]
         l = l[ind]
@@ -359,22 +339,16 @@ class SCData:
         if n_components > M.shape[1]:
             n_components = M.shape[1]
             print('Target dimensionality reduced to ' + str(n_components) + '.')
-
         M = M[:, ind[:n_components]]
         l = l[:n_components]
-
         # Apply mapping on the data
         if X.shape[1] >= X.shape[0]:
             M = np.multiply(np.dot(X.T, M), (1 / np.sqrt(X.shape[0] * l)).T)
-
         loadings = pd.DataFrame(data=M, index=self.data.columns)
         l = pd.DataFrame(l)
-
         self.pca = {'loadings': loadings, 'eigenvalues': l}
 
-
-    def plot_pca_variance_explained(self, n_components=30,
-            fig=None, ax=None, ylim=(0, 0.1)):
+    def plot_pca_variance_explained(self, n_components=30, fig=None, ax=None, ylim=(0, 0.1)):
         """ Plot the variance explained by different principal components
         :param n_components: Number of components to show the variance
         :param ylim: y-axis limits
@@ -384,7 +358,6 @@ class SCData:
         """
         if self.pca is None:
             raise RuntimeError('Please run run_pca() before plotting')
-
         fig, ax = get_fig(fig=fig, ax=ax)
         ax.plot(np.ravel(self.pca['eigenvalues'].values))
         plt.ylim(ylim)
@@ -395,16 +368,16 @@ class SCData:
         sns.despine(ax=ax)
         return fig, ax
 
-
-
-    def run_tsne(self, n_components=15, perplexity=30, rand_seed=-1):
+    def run_tsne(self, n_components=15, perplexity=30, rand_seed=-1, n_jobs=1,
+                 initialization='random', metric='euclidean',
+                 implementation='openTSNE'):
         """ Run tSNE on the data. tSNE is run on the principal component projections
         for single cell RNA-seq data and on the expression matrix for mass cytometry data
         :param n_components: Number of components to use for running tSNE for single cell
         RNA-seq data. Ignored for mass cytometry
+        :param implementation: t-SNE implementation ['openTSNE', 'bhtsne']
         :return: None
         """
-
         # Work on PCA projections if data is single cell RNA-seq
         data = deepcopy(self.data)
         if self.data_type == 'sc-seq':
@@ -421,9 +394,33 @@ class SCData:
         if data.shape[0] < 100 and perplexity > perplexity_limit:
             print('Reducing perplexity to %d since there are <100 cells in the dataset. ' % perplexity_limit)
             perplexity = perplexity_limit
-        self.tsne = pd.DataFrame(bhtsne.tsne(data, perplexity=perplexity, rand_seed=rand_seed),
-                         index=self.data.index, columns=['x', 'y'])
 
+        # run t-SNE
+        if implementation not in ('openTSNE', 'bhtsne'):
+            raise ValueError("Unknown t-SNE implementation {}\nShould be one of {'openTSNE', 'bhtsne'}".format(implementation))
+        if implementation == 'openTSNE':
+            if rand_seed == -1:
+                # openTSNE has default value "rand_seed=None" ;
+                # it cannot handle "-1" that is the default value from the
+                # original t-SNE (cpp) implementation
+                rand_seed = None
+            tsne_emb = TSNE(perplexity=perplexity,
+                            initialization=initialization,
+                            metric=metric,
+                            n_jobs=n_jobs,
+                            callbacks=ErrorLogger(),
+                            random_state=rand_seed)
+            tsne_data = tsne_emb.fit(data)
+        else:
+            # BH t-SNE (python-bhtsne)
+            # https://github.com/dominiek/python-bhtsne/blob/master/bhtsne/__init__.py
+            # Note the default parameters:
+            # tsne(data, dimensions=2, perplexity=30.0, theta=0.5, rand_seed=-1, seed_positions=np.array([]))
+            # And after some verifications, it returns:
+            # tsne.run(data, data.shape[0], data.shape[1], dimensions, perplexity, theta, rand_seed, seed_positions, skip_random_init)
+            tsne_data = bhtsne.tsne(data, perplexity=perplexity, rand_seed=rand_seed)
+        #
+        self.tsne = pd.DataFrame(tsne_data, index=self.data.index, columns=['x', 'y'])
 
     def plot_tsne(self, fig=None, ax=None, title='tSNE projection'):
         """Plot tSNE projections of the data
@@ -435,12 +432,11 @@ class SCData:
             raise RuntimeError('Please run tSNE using run_tsne before plotting ')
         fig, ax = get_fig(fig=fig, ax=ax)
         plt.scatter(self.tsne['x'], self.tsne['y'], s=size,
-            color=qualitative_colors(2)[1])
+                    color=qualitative_colors(2)[1])
         ax.xaxis.set_major_locator(plt.NullLocator())
         ax.yaxis.set_major_locator(plt.NullLocator())
         ax.set_title(title)
         return fig, ax
-
 
     def plot_tsne_by_cell_sizes(self, fig=None, ax=None, vmin=None, vmax=None):
         """Plot tSNE projections of the data with cells colored by molecule counts
@@ -451,9 +447,8 @@ class SCData:
         :param title: Title for the plot
         """
         if self.data_type == 'masscyt':
-            raise RuntimeError( 'plot_tsne_by_cell_sizes is not applicable \n\
-                for mass cytometry data. ' )
-
+            raise RuntimeError('plot_tsne_by_cell_sizes is not applicable \n\
+                for mass cytometry data. ')
         fig, ax = get_fig(fig, ax)
         if self.tsne is None:
             raise RuntimeError('Please run run_tsne() before plotting.')
@@ -475,17 +470,14 @@ class SCData:
         :param kwargs: Optional arguments to phenograph
         :return: None
         """
-
         data = deepcopy(self.data)
         if self.data_type == 'sc-seq':
             data -= np.min(np.ravel(data))
             data /= np.max(np.ravel(data))
             data = pd.DataFrame(np.dot(data, self.pca['loadings'].iloc[:, 0:n_pca_components]),
                                 index=self.data.index)
-
         communities, graph, Q = phenograph.cluster(data, **kwargs)
         self.cluster_assignments = pd.Series(communities, index=data.index)
-
 
     def plot_phenograph_clusters(self, fig=None, ax=None, labels=None):
         """Plot phenograph clustes on the tSNE map
@@ -496,16 +488,14 @@ class SCData:
         :param labels: Dictionary of labels for each cluster
         :return fig, ax
         """
-
         if self.tsne is None:
             raise RuntimeError('Please run tSNE before plotting phenograph clusters.')
-
         fig, ax = get_fig(fig=fig, ax=ax)
         clusters = sorted(set(self.cluster_assignments))
         colors = qualitative_colors(len(clusters))
         for i in range(len(clusters)):
             if labels:
-                label=labels[i]
+                label = labels[i]
             else:
                 label = clusters[i]
             data = self.tsne.ix[self.cluster_assignments == clusters[i], :]
@@ -516,7 +506,6 @@ class SCData:
         ax.yaxis.set_major_locator(plt.NullLocator())
         return fig, ax
 
-
     def summarize_phenograph_clusters(self, fig=None, ax=None):
         """Average expression of genes in phenograph clusters
         :param fig: matplotlib Figure object
@@ -525,24 +514,18 @@ class SCData:
         """
         if self.cluster_assignments is None:
             raise RuntimeError('Please run phenograph before deriving summary of gene expression.')
-
-
         # Calculate the means
         means = self.data.groupby(self.cluster_assignments).apply(lambda x: np.mean(x))
-
         # Calculate percentages
         counter = Counter(self.cluster_assignments)
-        means.index = ['%d (%.2f%%)' % (i, counter[i]/self.data.shape[0] * 100) \
-            for i in means.index]
-
+        means.index = ['%d (%.2f%%)' % (i, counter[i]/self.data.shape[0] * 100)
+                       for i in means.index]
         # Plot
-        fig, ax = get_fig(fig, ax, [8, 5] )
+        fig, ax = get_fig(fig, ax, [8, 5])
         sns.heatmap(means)
         plt.ylabel('Phenograph Clusters')
         plt.xlabel('Markers')
-
         return fig, ax
-
 
     def select_clusters(self, clusters):
         """Subselect cells from specific phenograph clusters
@@ -551,23 +534,19 @@ class SCData:
         """
         if self.cluster_assignments is None:
             raise RuntimeError('Please run phenograph before subselecting cells.')
-        if len(set(clusters).difference(self.cluster_assignments)) > 0 :
+        if len(set(clusters).difference(self.cluster_assignments)) > 0:
             raise RuntimeError('Some of the clusters specified are not present. Please select a subset of phenograph clusters')
-
         # Subset of cells to use
-        cells = self.data.index[self.cluster_assignments.isin( clusters )]
-
+        cells = self.data.index[self.cluster_assignments.isin(clusters)]
         # Create new SCData object
         data = self.data.ix[cells]
         if self.metadata is not None:
             meta = self.metadata.ix[cells]
-        scdata = SCData( data, self.data_type, meta )
+        scdata = SCData(data, self.data_type, meta)
         return scdata
 
-
-
-    def run_diffusion_map(self, knn=10, epsilon=1,
-        n_diffusion_components=10, n_pca_components=15, markers=None):
+    def run_diffusion_map(self, knn=10, epsilon=1, n_diffusion_components=10,
+                          n_pca_components=15, markers=None):
         """ Run diffusion maps on the data. Run on the principal component projections
         for single cell RNA-seq data and on the expression matrix for mass cytometry data
         :param knn: Number of neighbors for graph construction to determine distances between cells
@@ -577,29 +556,23 @@ class SCData:
         RNA-seq data. Ignored for mass cytometry
         :return: None
         """
-
         data = deepcopy(self.data)
         if self.data_type == 'sc-seq':
             if self.pca is None:
                 raise RuntimeError('Please run PCA using run_pca before running diffusion maps for single cell RNA-seq')
-
             data = deepcopy(self.data)
             data -= np.min(np.ravel(data))
             data /= np.max(np.ravel(data))
             data = pd.DataFrame(np.dot(data, self.pca['loadings'].iloc[:, 0:n_pca_components]),
                                 index=self.data.index)
-
         if markers is None:
             markers = self.data.columns
-
         if self.data_type == 'masscyt':
             data = deepcopy(self.data[markers])
-
         # Nearest neighbors
         N = data.shape[0]
         nbrs = NearestNeighbors(n_neighbors=knn).fit(data)
         distances, indices = nbrs.kneighbors(data)
-
         # Adjacency matrix
         rows = np.zeros(N * knn, dtype=np.int32)
         cols = np.zeros(N * knn, dtype=np.int32)
@@ -611,29 +584,23 @@ class SCData:
             cols[inds] = i
             dists[inds] = distances[i, :]
             location += knn
-        W = csr_matrix( (dists, (rows, cols)), shape=[N, N] )
-
+        W = csr_matrix((dists, (rows, cols)), shape=[N, N])
         # Symmetrize W
         W = W + W.T
-
         # Convert to affinity (with selfloops)
         rows, cols, dists = find(W)
         rows = np.append(rows, range(N))
         cols = np.append(cols, range(N))
         dists = np.append(dists/(epsilon ** 2), np.zeros(N))
-        W = csr_matrix( (np.exp(-dists), (rows, cols)), shape=[N, N] )
-
+        W = csr_matrix((np.exp(-dists), (rows, cols)), shape=[N, N])
         # Create D
-        D = np.ravel(W.sum(axis = 1))
-        D[D!=0] = 1/D[D!=0]
-
+        D = np.ravel(W.sum(axis=1))
+        D[D != 0] = 1/D[D != 0]
         # Symmetric markov normalization
         D = csr_matrix((np.sqrt(D), (range(N), range(N))),  shape=[N, N])
         P = D
         T = D.dot(W).dot(D)
         T = (T + T.T) / 2
-
-
         # Eigen value decomposition
         D, V = eigs(T, n_diffusion_components, tol=1e-4, maxiter=1000)
         D = np.real(D)
@@ -642,16 +609,13 @@ class SCData:
         D = D[inds]
         V = V[:, inds]
         V = P.dot(V)
-
         # Normalize
         for i in range(V.shape[1]):
             V[:, i] = V[:, i] / norm(V[:, i])
         V = np.round(V, 10)
-
         # Update object
         self.diffusion_eigenvectors = pd.DataFrame(V, index=self.data.index)
         self.diffusion_eigenvalues = pd.DataFrame(D)
-
 
     def plot_diffusion_components(self, title='Diffusion Components'):
         """ Plots the diffusion components on tSNE maps
@@ -676,13 +640,12 @@ class SCData:
             ax.xaxis.set_major_locator(plt.NullLocator())
             ax.yaxis.set_major_locator(plt.NullLocator())
             ax.set_aspect('equal')
-            plt.title( 'Component %d' % i, fontsize=10 )
-
+            plt.title('Component %d' % i, fontsize=10)
         # fig.suptitle(title, fontsize=12)
         return fig, ax
 
-
-    def plot_diffusion_eigen_vectors(self, fig=None, ax=None, title='Diffusion eigen vectors'):
+    def plot_diffusion_eigen_vectors(self, fig=None, ax=None,
+                                     title='Diffusion eigen vectors'):
         """ Plots the eigen values associated with diffusion components
         :return: fig, ax
         """
@@ -691,15 +654,14 @@ class SCData:
 
         fig, ax = get_fig(fig=fig, ax=ax)
         ax.plot(np.ravel(self.diffusion_eigenvalues.values))
-        plt.scatter( range(len(self.diffusion_eigenvalues)),
-            self._diffusion_eigenvalues, s=20, edgecolors='none', color='red' )
-        plt.xlabel( 'Diffusion components')
+        plt.scatter(range(len(self.diffusion_eigenvalues)),
+                    self._diffusion_eigenvalues, s=20, edgecolors='none', color='red')
+        plt.xlabel('Diffusion components')
         plt.ylabel('Eigen values')
-        plt.title( title )
-        plt.xlim([ -0.1, len(self.diffusion_eigenvalues) - 0.9])
+        plt.title(title)
+        plt.xlim([-0.1, len(self.diffusion_eigenvalues) - 0.9])
         sns.despine(ax=ax)
         return fig, ax
-
 
     @staticmethod
     def _correlation(x: np.array, vals: np.array):
@@ -708,9 +670,7 @@ class SCData:
         mu_vals = vals.mean(axis=0)  # cells by gene --> cells by genes
         sigma_x = x.std()
         sigma_vals = vals.std(axis=0)
-
         return ((vals * x).mean(axis=0) - mu_vals * mu_x) / (sigma_vals * sigma_x)
-
 
     def run_diffusion_map_correlations(self, components=None, no_cells=10):
         """ Determine gene expression correlations along diffusion components
@@ -749,13 +709,13 @@ class SCData:
             diffusion_map_correlations[:, component_index] = self._correlation(x, vals)
 
         # this is sorted by order, need it in original order (reverse the sort)
-        self.diffusion_map_correlations = pd.DataFrame(diffusion_map_correlations[:, components],
-                            index=self.data.columns, columns=components)
+        self.diffusion_map_correlations = pd.DataFrame(
+            diffusion_map_correlations[:, components],
+            index=self.data.columns, columns=components
+        )
 
-
-    def plot_gene_component_correlations(
-            self, components=None, fig=None, ax=None,
-            title='Gene vs. Diffusion Component Correlations'):
+    def plot_gene_component_correlations(self, components=None, fig=None, ax=None,
+                                         title='Gene vs. Diffusion Component Correlations'):
         """ plots gene-component correlations for a subset of components
 
         :param components: Iterable of integer component numbers
@@ -773,11 +733,11 @@ class SCData:
             components = self.diffusion_map_correlations.columns
         colors = qualitative_colors(len(components))
 
-        for c,color in zip(components, colors):
+        for c, color in zip(components, colors):
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')  # catch experimental ipython widget warning
-                sns.kdeplot(self.diffusion_map_correlations[c].fillna(0), label=c,
-                            ax=ax, color=color)
+                sns.kdeplot(self.diffusion_map_correlations[c].fillna(0),
+                            label=c, ax=ax, color=color)
         sns.despine(ax=ax)
         ax.set_title(title)
         ax.set_xlabel('correlation')
@@ -796,7 +756,6 @@ class SCData:
 
     @staticmethod
     def _gsea_process(c, diffusion_map_correlations, output_stem, gmt_file):
-
         # save the .rnk file
         out_dir, out_prefix = os.path.split(output_stem)
         genes_file = '{stem}_cmpnt_{component}.rnk'.format(
@@ -839,12 +798,11 @@ class SCData:
                     shutil.move('{}/{}'.format(out_dir, curr_name),
                                 '{}/{}'.format(out_dir, repl))
                     return err
-
             # execute if file cannot be found
             return b'GSEA output pattern was not found, and could not be changed.'
 
-    def run_gsea(self, output_stem, gmt_file=None,
-        components=None, enrichment_threshold=1e-1):
+    def run_gsea(self, output_stem, gmt_file=None, components=None,
+                 enrichment_threshold=1e-1):
         """ Run GSEA using gene rankings from diffusion map correlations
 
         :param output_stem: the file location and prefix for the output of GSEA
@@ -853,7 +811,6 @@ class SCData:
         :param enrichment_threshold: FDR corrected p-value significance threshold for gene set enrichments
         :return: Dictionary containing the top enrichments for each component
         """
-
         out_dir, out_prefix = os.path.split(output_stem)
         out_dir += '/'
         os.makedirs(out_dir, exist_ok=True)
@@ -877,8 +834,8 @@ class SCData:
         print('If running in notebook, please look at the command line window for GSEA progress log')
         reports = dict()
         for c in components:
-            res = self._gsea_process( c, self._diffusion_map_correlations,
-                output_stem, gmt_file )
+            res = self._gsea_process(c, self._diffusion_map_correlations,
+                                     output_stem, gmt_file)
             # Load results
             if res == b'':
                 # Positive correlations
@@ -895,13 +852,11 @@ class SCData:
         # Return results
         return reports
 
-
     # todo add option to plot phenograph cluster that these are being DE in.
     def plot_gene_expression(self, genes):
         """ Plot gene expression on tSNE maps
         :param genes: Iterable of strings to plot on tSNE
         """
-
         not_in_dataframe = set(genes).difference(self.data.columns)
         if not_in_dataframe:
             if len(not_in_dataframe) < len(genes):
@@ -937,6 +892,7 @@ class SCData:
             ax.yaxis.set_major_locator(plt.NullLocator())
 
         return fig, axes
+
 
 class Wishbone:
 
@@ -1026,7 +982,6 @@ class Wishbone:
             raise TypeError('self.waypoints must be a list object')
         self._waypoints = item
 
-
     @property
     def branch_colors(self):
         return self._branch_colors
@@ -1037,9 +992,8 @@ class Wishbone:
             raise TypeError('self.branch_colors a pd.Series object')
         self._branch_colors = item
 
-
     def run_wishbone(self, start_cell, branch=True, k=15,
-        components_list=[1, 2, 3], num_waypoints=250):
+                     components_list=[1, 2, 3], num_waypoints=250):
         """ Function to run Wishbone.
         :param start_cell: Desired start cell. This has to be a cell in self.scdata.index
         :param branch: Use True for Wishbone and False for Wanderlust
@@ -1048,7 +1002,6 @@ class Wishbone:
         :param num_waypoints: Number of waypoints to sample
         :return:
         """
-
         # Start cell index
         s = np.where(self.scdata.diffusion_eigenvectors.index == start_cell)[0]
         if len(s) == 0:
@@ -1095,32 +1048,28 @@ class Wishbone:
         # Set up figure
         fig = plt.figure(figsize=[8, 4])
         gs = plt.GridSpec(1, 2)
-
         # Trajectory
         ax = plt.subplot(gs[0, 0])
-        plt.scatter( self.scdata.tsne['x'], self.scdata.tsne['y'],
-            edgecolors='none', s=size, cmap=cmap, c=self.trajectory )
+        plt.scatter(self.scdata.tsne['x'], self.scdata.tsne['y'],
+                    edgecolors='none', s=size, cmap=cmap, c=self.trajectory)
         ax.xaxis.set_major_locator(plt.NullLocator())
         ax.yaxis.set_major_locator(plt.NullLocator())
         plt.title('Wishbone trajectory')
-
         # Branch
         if self.branch is not None:
             ax = plt.subplot(gs[0, 1])
-            plt.scatter( self.scdata.tsne['x'], self.scdata.tsne['y'],
-                edgecolors='none', s=size,
-                color=[self.branch_colors[i] for i in self.branch])
+            plt.scatter(self.scdata.tsne['x'], self.scdata.tsne['y'],
+                        edgecolors='none', s=size,
+                        color=[self.branch_colors[i] for i in self.branch])
             ax.xaxis.set_major_locator(plt.NullLocator())
             ax.yaxis.set_major_locator(plt.NullLocator())
             plt.title('Branch associations')
-
         return fig, ax
 
-
-
     # Function to plot trajectory
-    def plot_marker_trajectory(self, markers, show_variance=False,
-        no_bins=150, smoothing_factor=1, min_delta=0.1, fig=None, ax=None):
+    def plot_marker_trajectory(self, markers, show_variance=False, no_bins=150,
+                               smoothing_factor=1, min_delta=0.1, fig=None,
+                               ax=None):
         """Plot marker trends along trajectory
 
         :param markers: Iterable of markers/genes to be plotted.
@@ -1145,27 +1094,24 @@ class Wishbone:
 
         # Compute gaussian weights for points at each location
         # Standard deviation estimated from Silverman's approximation
-        stdev = np.std(trajectory) * 1.34 * len(trajectory) **(-1/5) * smoothing_factor
-        weights = np.exp(-((np.tile(trajectory, [no_bins, 1]).T -
-            bins) ** 2 / (2 * stdev**2))) * (1/(2*np.pi*stdev ** 2) ** 0.5)
+        stdev = np.std(trajectory) * 1.34 * len(trajectory) ** (-1/5) * smoothing_factor
+        weights = np.exp(-((np.tile(trajectory, [no_bins, 1]).T - bins) ** 2 / (2 * stdev**2))) * (1/(2*np.pi*stdev ** 2) ** 0.5)
 
-
-        # Adjust weights if data has branches
         if self.branch is not None:
-
+            # Adjust weights if data has branches
             plot_branch = True
-
             # Branch of the trunk
             trunk = self.branch[trajectory.index[0]]
-            branches = list( set( self.branch).difference([trunk]))
+            branches = list(set(self.branch).difference([trunk]))
             linetypes = pd.Series([':', '--'], index=branches)
-
-
             # Counts of branch cells in each bin
             branch_counts = pd.DataFrame(np.zeros([len(bins)-1, 3]), columns=[1, 2, 3])
             for j in branch_counts.columns:
-                branch_counts[j] = pd.Series([sum(self.branch[trajectory.index[(trajectory > bins[i-1]) & \
-                    (trajectory < bins[i])]] == j) for i in range(1, len(bins))])
+                branch_counts[j] = pd.Series([sum(self.branch[trajectory.index[
+                    (trajectory > bins[i-1]) &
+                    (trajectory < bins[i])]] == j)
+                                              for i in range(1, len(bins))]
+                )
             # Frequencies
             branch_counts = branch_counts.divide( branch_counts.sum(axis=1), axis=0)
 
@@ -1198,19 +1144,17 @@ class Wishbone:
         # Set up plot
         fig, ax = get_fig(fig, ax, figsize=[14, 4])
 
-        for marker,color in zip(markers, colors):
-
+        for marker, color in zip(markers, colors):
             # Marker expression repeated no bins times
             y = self.scdata.data.ix[trajectory.index, marker]
             rep_mark = np.tile(y, [no_bins, 1]).T
 
-
             # Normalize y
             y_min = np.percentile(y, 1)
             y = (y - y_min)/(np.percentile(y, 99) - y_min)
-            y[y < 0] = 0; y[y >  1] = 1;
+            y[y < 0] = 0
+            y[y > 1] = 1
             norm_rep_mark = pd.DataFrame(np.tile(y, [no_bins, 1])).T
-
 
             if not plot_branch:
                 # Weight and plot
@@ -1226,21 +1170,23 @@ class Wishbone:
 
                 # Show errors if specified
                 if show_variance:
-
                     # Scale the marks based on y and values to be plotted
-                    temp = (( norm_rep_mark - vals - np.min(y))/np.max(y)) ** 2
+                    temp = ((norm_rep_mark - vals - np.min(y))/np.max(y)) ** 2
                     # Calculate standard deviations
                     wstds = inner1d(np.asarray(temp).T, np.asarray(weights).T) / weights.sum()
 
-                    plt.fill_between(xaxis, vals - scaling_factor*wstds,
-                        vals + scaling_factor*wstds, alpha=0.2, color=color)
+                    plt.fill_between(xaxis,
+                                     vals - scaling_factor*wstds,
+                                     vals + scaling_factor*wstds,
+                                     alpha=0.2, color=color)
 
                 # Return values
                 ret_values['Trunk'][marker] = vals[0:bp_bin]
                 ret_values['Branch1'][marker] = vals[(bp_bin-2):]
                 ret_values['Branch2'][marker] = vals[(bp_bin-2):]
 
-            else: # Branching trajectory
+            else:
+                # Branching trajectory
                 rep_mark = pd.DataFrame(rep_mark, index=trajectory.index, columns=range(no_bins))
 
                 plot_split = True
@@ -1257,41 +1203,40 @@ class Wishbone:
                     weights.ix[self.branch.index[self.branch == br], :] = 0
 
                     plot_vals = ((rep_mark * weights)/np.sum(weights)).sum()
-                    branch_vals.append( plot_vals[(bp_bin-1):] )
+                    branch_vals.append(plot_vals[(bp_bin-1):])
 
                 # Min and max
-                temp = trunk_vals.append( branch_vals[0] ).append( branch_vals[1] )
+                temp = trunk_vals.append(branch_vals[0]).append(branch_vals[1])
                 min_val = np.min(temp)
                 max_val = np.max(temp)
-
 
                 # Plot the trunk
                 plot_vals = ((rep_mark * weights)/np.sum(weights)).sum()
                 plot_vals = (plot_vals - min_val)/(max_val - min_val)
                 plt.plot(xaxis[0:bp_bin], plot_vals[0:bp_bin],
-                    label=marker, color=color, linewidth=linewidth)
+                         label=marker, color=color, linewidth=linewidth)
 
                 if show_variance:
                     # Calculate weighted stds for plotting
                     # Scale the marks based on y and values to be plotted
-                    temp = (( norm_rep_mark - plot_vals - np.min(y))/np.max(y)) ** 2
+                    temp = ((norm_rep_mark - plot_vals - np.min(y))/np.max(y)) ** 2
                     # Calculate standard deviations
                     wstds = inner1d(np.asarray(temp).T, np.asarray(weights).T) / weights.sum()
 
                     # Plot
-                    plt.fill_between(xaxis[0:bp_bin], plot_vals[0:bp_bin] - scaling_factor*wstds[0:bp_bin],
-                        plot_vals[0:bp_bin] + scaling_factor*wstds[0:bp_bin], alpha=0.1, color=color)
+                    plt.fill_between(xaxis[0:bp_bin],
+                                     plot_vals[0:bp_bin] - scaling_factor*wstds[0:bp_bin],
+                                     plot_vals[0:bp_bin] + scaling_factor*wstds[0:bp_bin],
+                                     alpha=0.1, color=color)
 
                 # Add values to return values
                 ret_values['Trunk'][marker] = plot_vals[0:bp_bin]
 
-
-
                 # Identify markers which need a split
-                if sum( abs(pd.Series(branch_vals[0]) - pd.Series(branch_vals[1])) > min_delta ) < 5:
+                if sum(abs(pd.Series(branch_vals[0]) - pd.Series(branch_vals[1])) > min_delta) < 5:
                     # Split not necessary, plot the trunk values
                     plt.plot(xaxis[(bp_bin-1):], plot_vals[(bp_bin-1):],
-                        color=color, linewidth=linewidth)
+                             color=color, linewidth=linewidth)
 
                     # Add values to return values
                     ret_values['Branch1'][marker] = list(plot_vals[(bp_bin-2):])
@@ -1300,14 +1245,16 @@ class Wishbone:
                     if show_variance:
                         # Calculate weighted stds for plotting
                         # Scale the marks based on y and values to be plotted
-                        temp = (( norm_rep_mark - plot_vals - np.min(y))/np.max(y)) ** 2
+                        temp = ((norm_rep_mark - plot_vals - np.min(y))/np.max(y)) ** 2
                         wstds = inner1d(np.asarray(temp).T, np.asarray(weights).T) / weights.sum()
                         # Plot
-                        plt.fill_between(xaxis[(bp_bin-1):], plot_vals[(bp_bin-1):] - scaling_factor*wstds[(bp_bin-1):],
-                            plot_vals[(bp_bin-1):] + scaling_factor*wstds[(bp_bin-1):], alpha=0.1, color=color)
+                        plt.fill_between(xaxis[(bp_bin-1):],
+                                         plot_vals[(bp_bin-1):] - scaling_factor*wstds[(bp_bin-1):],
+                                         plot_vals[(bp_bin-1):] + scaling_factor*wstds[(bp_bin-1):],
+                                         alpha=0.1, color=color)
                 else:
                     # Plot the two branches separately
-                    for br_ind,br in enumerate(branches):
+                    for br_ind, br in enumerate(branches):
                         # Mute weights of the branch cells and plot
                         weights = weights_copy.copy()
 
@@ -1323,45 +1270,46 @@ class Wishbone:
                         plot_vals = ((rep_mark * weights)/np.sum(weights)).sum()
                         plot_vals = (plot_vals - min_val)/(max_val - min_val)
                         plt.plot(xaxis[(bp_bin-2):], plot_vals[(bp_bin-2):],
-                            linetypes[br], color=color, linewidth=linewidth)
+                                 linetypes[br], color=color,
+                                 linewidth=linewidth)
 
                         if show_variance:
                             # Calculate weighted stds for plotting
                             # Scale the marks based on y and values to be plotted
-                            temp = (( norm_rep_mark - plot_vals - np.min(y))/np.max(y)) ** 2
+                            temp = ((norm_rep_mark - plot_vals - np.min(y))/np.max(y)) ** 2
                             # Calculate standard deviations
                             wstds = inner1d(np.asarray(temp).T, np.asarray(weights).T) / weights.sum()
 
                             # Plot
-                            plt.fill_between(xaxis[(bp_bin-1):], plot_vals[(bp_bin-1):] - scaling_factor*wstds[(bp_bin-1):],
-                                plot_vals[(bp_bin-1):] + scaling_factor*wstds[(bp_bin-1):], alpha=0.1, color=color)
+                            plt.fill_between(xaxis[(bp_bin-1):],
+                                             plot_vals[(bp_bin-1):] - scaling_factor*wstds[(bp_bin-1):],
+                                             plot_vals[(bp_bin-1):] + scaling_factor*wstds[(bp_bin-1):],
+                                             alpha=0.1, color=color)
 
                         # Add values to return values
                         ret_values['Branch%d' % (br_ind + 1)][marker] = list(plot_vals[(bp_bin-2):])
 
-
         # Clean up the plotting
         # Clean xlim
-        plt.legend(loc=2, bbox_to_anchor=(1, 1), prop={'size':16})
+        plt.legend(loc=2, bbox_to_anchor=(1, 1), prop={'size': 16})
 
         # Annotations
         # Add trajectory as underlay
         cm = matplotlib.cm.Spectral_r
         yval = plt.ylim()[0]
         yval = 0
-        plt.scatter( trajectory, np.repeat(yval - 0.1, len(trajectory)),
-            c=trajectory, cmap=cm, edgecolors='none', s=size)
+        plt.scatter(trajectory, np.repeat(yval - 0.1, len(trajectory)),
+                    c=trajectory, cmap=cm, edgecolors='none', s=size)
         sns.despine()
-        plt.xticks( np.arange(0, 1.1, 0.1) )
+        plt.xticks(np.arange(0, 1.1, 0.1))
 
         # Clean xlim
         plt.xlim([-0.05, 1.05])
-        plt.ylim([-0.2, 1.1 ])
+        plt.ylim([-0.2, 1.1])
         plt.xlabel('Wishbone trajectory')
         plt.ylabel('Normalized expression')
 
         return ret_values, fig, ax
-
 
     def plot_marker_heatmap(self, marker_trends, trajectory_range=[0, 1]):
         """ Plot expression of markers as a heatmap
@@ -1377,15 +1325,15 @@ class Wishbone:
         markers = marker_trends['Trunk'].columns[1:]
 
         if self.branch is not None:
-            fig = plt.figure(figsize = [16, 0.5*len(markers)])
-            gs = plt.GridSpec( 1, 2 )
+            fig = plt.figure(figsize=[16, 0.5*len(markers)])
+            gs = plt.GridSpec(1, 2)
 
             branches = np.sort(list(set(marker_trends.keys()).difference(['Trunk'])))
-            for i,br in enumerate(branches):
-                ax = plt.subplot( gs[0, i] )
+            for i, br in enumerate(branches):
+                ax = plt.subplot(gs[0, i])
 
                 # Construct the full matrix
-                mat = marker_trends['Trunk'].append( marker_trends[br][2:] )
+                mat = marker_trends['Trunk'].append(marker_trends[br][2:])
                 mat.index = range(mat.shape[0])
 
                 # Start and end
@@ -1395,17 +1343,16 @@ class Wishbone:
                 # Plot
                 plot_mat = mat.ix[start:end]
                 sns.heatmap(plot_mat[markers].T,
-                    linecolor='none', cmap=cmap, vmin=0, vmax=1)
+                            linecolor='none', cmap=cmap, vmin=0, vmax=1)
                 ax.xaxis.set_major_locator(plt.NullLocator())
-                ticks = np.arange(trajectory_range[0], trajectory_range[1]+0.1, 0.1)
+                ticks = np.arange(trajectory_range[0], trajectory_range[1] + 0.1, 0.1)
                 plt.xticks([np.where(plot_mat['x'] >= i)[0][0] for i in ticks], ticks)
-
                 # Labels
-                plt.xlabel( 'Wishbone trajectory' )
-                plt.title( br )
+                plt.xlabel('Wishbone trajectory')
+                plt.title(br)
         else:
             # Plot values from the trunk alone
-            fig = plt.figure(figsize = [8, 0.5*len(markers)])
+            fig = plt.figure(figsize=[8, 0.5*len(markers)])
             ax = plt.gca()
 
             # Construct the full matrix
@@ -1419,17 +1366,13 @@ class Wishbone:
             # Plot
             plot_mat = mat.ix[start:end]
             sns.heatmap(plot_mat[markers].T,
-                linecolor='none', cmap=cmap, vmin=0, vmax=1)
+                        linecolor='none', cmap=cmap, vmin=0, vmax=1)
             ax.xaxis.set_major_locator(plt.NullLocator())
-            ticks = np.arange(trajectory_range[0], trajectory_range[1]+0.1, 0.1)
+            ticks = np.arange(trajectory_range[0], trajectory_range[1] + 0.1, 0.1)
             plt.xticks([np.where(plot_mat['x'] >= i)[0][0] for i in ticks], ticks)
-
             # Labels
-            plt.xlabel( 'Wishbone trajectory' )
-
-
+            plt.xlabel('Wishbone trajectory')
         return fig, ax
-
 
     def plot_derivatives(self, marker_trends, trajectory_range=[0, 1]):
         """ Plot change in expression of markers along trajectory
@@ -1441,20 +1384,19 @@ class Wishbone:
         if trajectory_range[0] < 0 or trajectory_range[1] > 1:
             raise RuntimeError('Please use a range between (0, 1)')
 
-
         # Set up figure
         markers = marker_trends['Trunk'].columns[1:]
 
         if self.branch is not None:
-            fig = plt.figure(figsize = [16, 0.5*len(markers)])
-            gs = plt.GridSpec( 1, 2 )
+            fig = plt.figure(figsize=[16, 0.5*len(markers)])
+            gs = plt.GridSpec(1, 2)
 
             branches = np.sort(list(set(marker_trends.keys()).difference(['Trunk'])))
-            for i,br in enumerate(branches):
-                ax = plt.subplot( gs[0, i] )
+            for i, br in enumerate(branches):
+                ax = plt.subplot(gs[0, i])
 
                 # Construct the full matrix
-                mat = marker_trends['Trunk'].append( marker_trends[br][2:] )
+                mat = marker_trends['Trunk'].append(marker_trends[br][2:])
                 mat.index = range(mat.shape[0])
 
                 # Start and end
@@ -1473,20 +1415,19 @@ class Wishbone:
                 mat = mat.ix[start:end]
 
                 # Differences
-                vmax = max(0.05,  abs(diffs).max().max() )
+                vmax = max(0.05, abs(diffs).max().max())
                 # Plot
                 sns.heatmap(diffs.T, linecolor='none',
-                    cmap=matplotlib.cm.RdBu_r, vmin=-vmax, vmax=vmax)
+                            cmap=matplotlib.cm.RdBu_r, vmin=-vmax, vmax=vmax)
                 ax.xaxis.set_major_locator(plt.NullLocator())
-                ticks = np.arange(trajectory_range[0], trajectory_range[1]+0.1, 0.1)
+                ticks = np.arange(trajectory_range[0], trajectory_range[1] + 0.1, 0.1)
                 plt.xticks([np.where(mat['x'] >= i)[0][0] for i in ticks], ticks)
-
                 # Labels
-                plt.xlabel( 'Wishbone trajectory' )
-                plt.title( br )
+                plt.xlabel('Wishbone trajectory')
+                plt.title(br)
         else:
             # Plot values from the trunk alone
-            fig = plt.figure(figsize = [8, 0.5*len(markers)])
+            fig = plt.figure(figsize=[8, 0.5*len(markers)])
             ax = plt.gca()
 
             # Construct the full matrix
@@ -1504,15 +1445,14 @@ class Wishbone:
             mat = mat.ix[start:end]
 
             # Differences
-            vmax = max(0.05,  abs(diffs).max().max() )
+            vmax = max(0.05, abs(diffs).max().max())
             # Plot
             sns.heatmap(diffs.T, linecolor='none',
-                cmap=matplotlib.cm.RdBu_r, vmin=-vmax, vmax=vmax)
+                        cmap=matplotlib.cm.RdBu_r, vmin=-vmax, vmax=vmax)
             ax.xaxis.set_major_locator(plt.NullLocator())
-            ticks = np.arange(trajectory_range[0], trajectory_range[1]+0.1, 0.1)
+            ticks = np.arange(trajectory_range[0], trajectory_range[1] + 0.1, 0.1)
             plt.xticks([np.where(mat['x'] >= i)[0][0] for i in ticks], ticks)
-
             # Labels
-            plt.xlabel( 'Wishbone trajectory' )
+            plt.xlabel('Wishbone trajectory')
 
         return fig, ax
