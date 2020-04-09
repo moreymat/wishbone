@@ -28,6 +28,8 @@ with warnings.catch_warnings():
 import bhtsne
 from openTSNE import TSNE
 from openTSNE.callbacks import ErrorLogger
+# and the alternative: UMAP
+import umap
 #
 from scipy.sparse import csr_matrix, find
 from scipy.sparse.linalg import eigs
@@ -421,6 +423,34 @@ class SCData:
             tsne_data = bhtsne.tsne(data, perplexity=perplexity, rand_seed=rand_seed)
         #
         self.tsne = pd.DataFrame(tsne_data, index=self.data.index, columns=['x', 'y'])
+
+    def run_umap(self, n_neighbors=15, n_components=2, metric='euclidean',
+                 min_dist=0.1, transform_seed=42, init='spectral'):
+        """Run UMAP on the data.
+
+        UMAP is run on the expression matrix for mass cytometry data.
+
+        Parameters
+        ----------
+        n_neighbors: int
+            Size of local neighborhood
+        n_components: int
+            Dimension of the space to embed into.
+        """
+        data = deepcopy(self.data)
+        data = data.astype(np.float64)
+        # run UMAP
+        fit = umap.UMAP(
+            n_neighbors=n_neighbors,
+            n_components=n_components,
+            metric=metric,
+            min_dist=min_dist,
+            transform_seed=transform_seed,
+            init=init
+        )
+        u_data = fit.fit_transform(data)
+        # TODO check if abusing self.tsne is problematic
+        self.tsne = pd.DataFrame(u_data, index=self.data.index, columns=['x', 'y'])
 
     def plot_tsne(self, fig=None, ax=None, title='tSNE projection'):
         """Plot tSNE projections of the data
@@ -878,7 +908,7 @@ class SCData:
         gs = plt.GridSpec(n_rows, n_cols)
 
         axes = []
-        for i, g in enumerate(genes):
+        for i, g in enumerate(sorted(genes)):
             ax = plt.subplot(gs[i // n_cols, i % n_cols])
             axes.append(ax)
             if self.data_type == 'sc-seq':
