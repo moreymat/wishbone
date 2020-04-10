@@ -898,17 +898,17 @@ class SCData:
                 return
 
         # remove genes missing from experiment
-        genes = set(genes).difference(not_in_dataframe)
+        genes = [x for x in genes if x not in not_in_dataframe]
 
-        height = int(2 * np.ceil(len(genes) / 5))
-        width = 10
+        height = int(4 * np.ceil(len(genes) / 5))
+        width = 20
         fig = plt.figure(figsize=[width, height+0.25])
         n_rows = int(height / 2)
         n_cols = int(width / 2)
         gs = plt.GridSpec(n_rows, n_cols)
 
         axes = []
-        for i, g in enumerate(sorted(genes)):
+        for i, g in enumerate(genes):
             ax = plt.subplot(gs[i // n_cols, i % n_cols])
             axes.append(ax)
             if self.data_type == 'sc-seq':
